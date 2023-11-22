@@ -2,10 +2,15 @@ provider "aws" {
   region = "us-east-2"
 }
 
-variable "server_port" {
-  description = "The port the server will use for HTTP requests"
-  type = number
-  default = 8080
+terraform {
+  backend "s3" {
+    bucket = "aperesztegi-terraform-up-and-running"
+    key = "stage/services/web-cluster/terraform.tfstate"
+    region = "us-east-2"
+
+    dynamodb_table = "aperesztegi-terraform-up-and-running-locks"
+    encrypt = true
+  }
 }
 
 resource "aws_security_group" "instance" {
@@ -23,11 +28,11 @@ resource "aws_launch_configuration" "example" {
   instance_type = "t2.micro"
   security_groups = [aws_security_group.instance.id]
   
-  user_data = <<-EOF
-    #!/bin/bash
-    echo "Hello world" > index.html
-    nohup busybox httpd -f -p ${var.server_port} &
-    EOF
+  user_data = templatefile("user-data.sh", {
+    server_port = var.server_port
+    db_address = data.terraform_remote_state.db.outputs.address
+    db_port = data.terraform_remote_state.db.outputs.port
+  })
 
   # Required when using a launch configuration with an auto scaling group.
   lifecycle {
@@ -139,30 +144,12 @@ resource "aws_lb_listener_rule" "asg" {
   }
 }
 
-# resource "aws_instance" "example" {
-#   ami = "ami-0e83be366243f524a"
-#   instance_type = "t2.micro"
-#   vpc_security_group_ids = [aws_security_group.instance.id]
-  
-#   user_data = <<-EOF
-#     #!/bin/bash
-#     echo "Hello world" > index.html
-#     nohup busybox httpd -f -p ${var.server_port} &
-#     EOF
+data "terraform_remote_state" "db" {
+  backend = "s3"
 
-#   user_data_replace_on_change = true
-
-#   tags = {
-#     Name = "terraform-example"
-#   }
-# }
-
-# output "public_ip" {
-#   value = aws_instance.example.public_ip
-#   description = "The public IPB address of the web server"
-# }
-
-output "alb_dns_name" {
-  value = aws_lb.example.dns_name
-  description = "The domain name of the load balancer"
+  config = {
+    bucket = "aperesztegi-terraform-up-and-running"
+    key = "stage/data-stores/mysql/terraform.tfstate"
+    region = "us-east-2"
+  }
 }
